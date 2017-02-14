@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+
+import os
+#from setuptools import setup
+from distutils.core import setup
+
+"""
+# Get relative path used in package detection, when installing with cmake
+cwd = os.getcwd()
+levels = 0
+while(os.path.basename(cwd) != 'vmrunner'):
+    cwd = os.path.split(cwd)[0]
+    levels += 1
+
+package_parent_dir = "./" + "../" * levels
+"""
+package_parent_dir = '${CMAKE_CURRENT_SOURCE_DIR}'
+
+setup(name='vmrunner',
+      version='0.1',
+      package_dir={ '': package_parent_dir },
+      packages=['vmrunner'],
+      #include_package_data=True,
+      #zip_safe=False)
+      )
