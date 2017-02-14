@@ -120,6 +120,15 @@ if(diskbuilder)
   )
 endif(diskbuilder)
 
+option(vmrunner "Build and install vmrunner python package" ON)
+if(vmrunner)
+  ExternalProject_Add(vmrunner
+    SOURCE_DIR ${INCLUDEOS_ROOT}/vmrunner
+    INSTALL_DIR includeos/vmrunner
+    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+  )
+endif(vmrunner)
+
 option(examples "Build example unikernels in /examples" OFF)
 if(examples)
 	add_subdirectory(examples)
@@ -157,7 +166,7 @@ endif(rapidjson)
 #
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/etc/service.cmake DESTINATION includeos)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/etc/library.cmake DESTINATION includeos)
-install(DIRECTORY vmrunner DESTINATION includeos/)
+#install(DIRECTORY vmrunner DESTINATION includeos/)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/i686-elf-toolchain.cmake DESTINATION includeos)
 install(DIRECTORY seed/ DESTINATION includeos/seed)
 
