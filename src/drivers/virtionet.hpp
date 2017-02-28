@@ -132,6 +132,10 @@ public:
   uint16_t MTU() const noexcept override
   { return 1500; }
 
+  uint16_t packet_len() const noexcept {
+    return Link::Protocol::header_size() + MTU();
+  }
+
   net::downstream create_physical_downstream()
   { return {this, &VirtioNet::transmit}; }
 
@@ -149,6 +153,8 @@ public:
   }
 
   void deactivate() override;
+
+  void move_to_this_cpu() override;
 
 private:
 
@@ -177,15 +183,8 @@ private:
     uint16_t num_buffers;
   }__attribute__((packed));
 
-  struct virtio_net_rxhdr {
-    uint8_t   flags;
-    uint8_t   gso_type;
-    uint16_t  hdr_len;
-    uint16_t  gso_size;
-    uint16_t  csum_start;
-    uint16_t  csum_offset;
-    uint16_t  bufs;
-  }__attribute__((packed));
+  // make packets cache-aligned on the IP-layer
+  static const int VIRTIO_HDR_OFFSET = sizeof(virtio_net_hdr);
 
   Virtio::Queue rx_q;
   Virtio::Queue tx_q;
@@ -219,7 +218,7 @@ private:
   void msix_conf_handler();
 
   /** Allocate and queue buffer from bufstore_ in RX queue. */
-  void add_receive_buffer();
+  void add_receive_buffer(uint8_t*);
 
   std::unique_ptr<net::Packet> recv_packet(uint8_t* data, uint16_t sz);
 

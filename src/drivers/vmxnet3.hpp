@@ -47,7 +47,11 @@ public:
     return this->hw_addr;
   }
 
-  uint16_t MTU() const noexcept override
+  uint16_t MTU() const noexcept override {
+    return 1500;
+  }
+
+  uint16_t packet_len() const noexcept
   {        // ethernet + vlan + fcs
     return ETH_FRAME_LEN + 4 + 4;
   }
@@ -69,6 +73,8 @@ public:
   }
 
   void deactivate() override;
+
+  void move_to_this_cpu() override;
 
 private:
   void msix_evt_handler();
@@ -108,6 +114,8 @@ private:
   void     retrieve_hwaddr();
   void     set_hwaddr(hw::MAC_addr&);
 
+  hw::PCI_Device& pcidev;
+  std::vector<uint8_t> irqs;
   uintptr_t       iobase;
   uintptr_t       ptbase;
   hw::MAC_addr    hw_addr;

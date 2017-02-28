@@ -41,8 +41,10 @@ set(TEST_SOURCES
   ${TEST}/kernel/unit/kprint_test.cpp
   ${TEST}/kernel/unit/memmap_test.cpp
   ${TEST}/kernel/unit/os_test.cpp
-  ${TEST}/kernel/unit/rdrand_test.cpp
+  # not all CPUs have rdrand
+  #${TEST}/kernel/unit/rdrand_test.cpp
   ${TEST}/kernel/unit/service_stub_test.cpp
+  ${TEST}/net/unit/checksum.cpp
   ${TEST}/net/unit/cookie_test.cpp
   ${TEST}/net/unit/dns_test.cpp
   ${TEST}/net/unit/http_header_test.cpp
@@ -87,21 +89,12 @@ set(OS_SOURCES
   ${SRC}/fs/mbr.cpp
   ${SRC}/fs/memdisk.cpp
   ${SRC}/fs/path.cpp
-  ${SRC}/hw/acpi.cpp
-  ${SRC}/hw/apic.cpp
-  ${SRC}/hw/apic_revenant.cpp
-  ${SRC}/hw/apic_timer.cpp
   ${SRC}/hw/block_device.cpp
-  ${SRC}/hw/cpu_freq_sampling.cpp
-  ${SRC}/hw/ioapic.cpp
   ${SRC}/hw/msi.cpp
   ${SRC}/hw/pci_device.cpp
   ${SRC}/hw/pci_msi.cpp
-  ${SRC}/hw/pic.cpp
-  ${SRC}/hw/pit.cpp
   ${SRC}/hw/ps2.cpp
   ${SRC}/hw/serial.cpp
-  ${SRC}/hw/smp.cpp
   ${SRC}/kernel/block.cpp
   ${SRC}/kernel/cpuid.cpp
   ${SRC}/kernel/elf.cpp

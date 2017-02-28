@@ -20,6 +20,7 @@
 #include "vmxnet3_queues.hpp"
 
 #include <kernel/irq_manager.hpp>
+#include <smp>
 #include <info>
 #include <cassert>
 #include <malloc.h>
@@ -102,12 +103,11 @@ inline void mmio_write32(uintptr_t location, uint32_t value)
 {
   *(uint32_t volatile*) location = value;
 }
-#define wmb() asm volatile("" : : : "memory")
 
 vmxnet3::vmxnet3(hw::PCI_Device& d) :
     Link(Link_protocol{{this, &vmxnet3::transmit}, mac()}, 
-         2048, 
-         sizeof(net::Packet) + MTU())
+         2048, 2048 /* half-page buffer size */),
+    pcidev(d)
 {
   INFO("vmxnet3", "Driver initializing (rev=%#x)", d.rev_id());
   assert(d.rev_id() == REVISION_ID);
@@ -118,13 +118,14 @@ vmxnet3::vmxnet3(hw::PCI_Device& d) :
     INFO2("[x] Device has %u MSI-X vectors", msix_vectors);
     assert(msix_vectors >= 3);
     if (msix_vectors > 3) msix_vectors = 3;
-    std::vector<uint8_t> irqs;
     
     for (int i = 0; i < msix_vectors; i++)
     {
-      auto irq = IRQ_manager::get().get_next_msix_irq();
-      d.setup_msix_vector(0x0, IRQ_BASE + irq);
-      irqs.push_back(irq);
+      auto irq = IRQ_manager::get().get_free_irq();
+      d.setup_msix_vector(SMP::cpu_id(), IRQ_BASE + irq);
+      this->irqs.push_back(irq);
+      // dummpy subscription to make free_irq change
+      IRQ_manager::get().subscribe(irq, nullptr);
     }
     
     IRQ_manager::get().subscribe(irqs[0], {this, &vmxnet3::msix_evt_handler});
@@ -211,7 +212,7 @@ vmxnet3::vmxnet3(hw::PCI_Device& d) :
   shared.misc.queue_desc_address  = (uintptr_t) &dma->queues;
   shared.misc.driver_data_len     = sizeof(vmxnet3_dma);
   shared.misc.queue_desc_len      = sizeof(vmxnet3_queues);
-  shared.misc.mtu = MTU(); // 60-9000
+  shared.misc.mtu = packet_len(); // 60-9000
   shared.misc.num_tx_queues  = 1;
   shared.misc.num_rx_queues  = NUM_RX_QUEUES;
   shared.interrupt.mask_mode = 0; // IMM_AUTO
@@ -240,7 +241,7 @@ vmxnet3::vmxnet3(hw::PCI_Device& d) :
   }
   
   // deferred transmit
-  this->deferred_irq = IRQ_manager::get().get_next_msix_irq();
+  this->deferred_irq = IRQ_manager::get().get_free_irq();
   IRQ_manager::get().subscribe(this->deferred_irq, handle_deferred);
   
   // enable interrupts
@@ -343,7 +344,7 @@ void vmxnet3::refill(rxring_state& rxq)
     // assign rx descriptor
     auto& desc = rxq.desc0[i];
     desc.address = (uintptr_t) rxq.buffers[i];
-    desc.flags   = MTU() | generation;
+    desc.flags   = packet_len() | generation;
     rxq.prod_count++;
     rxq.producers++;
     
@@ -360,14 +361,14 @@ net::Packet_ptr
 vmxnet3::recv_packet(uint8_t* data, uint16_t size)
 {
   auto* ptr = (net::Packet*) (data - sizeof(net::Packet));
-  new (ptr) net::Packet(bufsize(), size, 0, &bufstore());
+  new (ptr) net::Packet(packet_len(), size, 0, &bufstore());
   return net::Packet_ptr(ptr);
 }
 net::Packet_ptr
 vmxnet3::create_packet(uint16_t size)
 {
   auto* ptr = (net::Packet*) bufstore().get_buffer();
-  new (ptr) net::Packet(MTU(), size, 0, &bufstore());
+  new (ptr) net::Packet(packet_len(), size, 0, &bufstore());
   return net::Packet_ptr(ptr);
 }
 
@@ -513,6 +514,19 @@ void vmxnet3::handle_deferred()
 void vmxnet3::deactivate()
 {
   assert(0);
+}
+
+void vmxnet3::move_to_this_cpu()
+{
+  if (pcidev.has_msix())
+  {
+    for (size_t i = 0; i < irqs.size(); i++)
+    {
+      this->irqs[i] = IRQ_manager::get().get_free_irq();
+      pcidev.rebalance_msix_vector(i, SMP::cpu_id(), IRQ_BASE + this->irqs[i]);
+      IRQ_manager::get().subscribe(this->irqs[i], nullptr);
+    }
+  }
 }
 
 #include <kernel/pci_manager.hpp>

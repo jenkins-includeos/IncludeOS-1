@@ -61,6 +61,10 @@ namespace net {
     uint16_t ip_data_length() const noexcept
     { return ip_segment_length() - ip_header_length(); }
 
+    // TODO: Remove Ethernet dependency, some day...
+    uint16_t ip_capacity() const noexcept
+    { return capacity() - ip_full_header_length() - sizeof(LinkLayer::trailer); }
+
     void set_ip_data_length(uint16_t length) {
       set_size(ip_full_header_length() + length);
       set_segment_length();
@@ -108,7 +112,7 @@ namespace net {
     void set_ip4_checksum() noexcept {
       auto& hdr = ip_header();
       hdr.check = 0;
-      hdr.check = net::checksum(&hdr, sizeof(IP4::ip_header));
+      hdr.check = net::checksum(&hdr, ip_header_length());
     }
 
     friend class IP4;

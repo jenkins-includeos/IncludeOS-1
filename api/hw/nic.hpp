@@ -65,9 +65,6 @@ namespace hw {
     size_t buffers_available()
     { return bufstore_.available(); }
 
-    uint16_t bufsize() const
-    { return bufstore_.bufsize(); }
-
     virtual net::Packet_ptr create_packet(uint16_t) = 0;
 
     /** Subscribe to event for when there is more room in the tx queue */
@@ -77,6 +74,8 @@ namespace hw {
     virtual size_t transmit_queue_available() = 0;
 
     virtual void deactivate() = 0;
+
+    virtual void move_to_this_cpu() = 0;
 
     virtual ~Nic() {}
   protected:

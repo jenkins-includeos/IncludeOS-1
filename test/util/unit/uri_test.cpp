@@ -52,6 +52,23 @@ CASE("port() returns the URI's port (no path)") {
   EXPECT(uri.port() == 80);
 }
 
+CASE("port() defaults according to the correct protocol") {
+  uri::URI http {"http://www.vg.no"};
+  EXPECT(http.port() == 80);
+
+  uri::URI ftp {"ftp://silkroad.com"};
+  EXPECT(ftp.port() == 21);
+
+  uri::URI irc {"irc://irc.includeos.org"};
+  EXPECT(irc.port() == 6667);
+
+  uri::URI random {"lul://does.not.work"};
+  EXPECT(random.port() == 65535);
+
+  uri::URI port_provided {"http://some.random.site.uk:8080"};
+  EXPECT(port_provided.port() == 8080);
+}
+
 CASE("out-of-range ports throws exception") {
   EXPECT_THROWS(uri::URI uri {"https://www.vg.no:65539"});
 }
@@ -81,12 +98,20 @@ CASE("fragment() returns fragment part") {
   EXPECT(uri.fragment() == "take-it-for-a-spin");
 }
 
-CASE("host_is_ip4() returns whether uri's host is an IP4 address")
+CASE("host_is_ip4() returns whether uri's host is an IPv4 address")
 {
   uri::URI uri {"http://www.vg.no?fname=patrick&lname=bateman"};
   EXPECT(uri.host_is_ip4() == false);
-  uri::URI ip_uri  {"http://172.217.16.164/"};
-  EXPECT(ip_uri.host_is_ip4() == true);
+  (uri.reset() << "http://172.217.16.164/").parse();
+  EXPECT(uri.host_is_ip4() == true);
+}
+
+CASE("host_is_ip6() returns whether uri's host is an IPv6 address")
+{
+  uri::URI uri {"http://www.vg.no?fname=patrick&lname=bateman"};
+  EXPECT(uri.host_is_ip6() == false);
+  (uri.reset() << "http://[1080::8:800:200C:417A]").parse();
+  EXPECT(uri.host_is_ip6() == true);
 }
 
 CASE("port_str() returns uri's port as string")
