@@ -5,6 +5,7 @@ pipeline {
       steps {
         sh './install.sh'
         node(label: 'build')
+        ansiColor(colorMapName: 'xterm')
       }
     }
   }
