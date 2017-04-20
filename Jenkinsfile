@@ -3,13 +3,14 @@ pipeline {
   stages {
     stage('Build') {
       steps {
-        sh '''./install.sh
-'''
+        sh './install.sh'
+        node(label: 'build')
+        ansiColor(colorMapName: 'xterm')
       }
     }
   }
   environment {
     INCLUDEOS_SRC = '$WORKSPACE'
-    INCLUDEOS_INSTALL = '$WORKSPACE/INCLUDEOS_INSTALL'
+    INCLUDEOS_PREFIX = '$WORKSPACE/INCLUDEOS_INSTALL'
   }
 }
