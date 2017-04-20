@@ -3,8 +3,8 @@ pipeline {
   stages {
     stage('Build') {
       steps {
-        node(label: 'build')
         sh './install.sh'
+        node(label: 'build')
       }
     }
   }
