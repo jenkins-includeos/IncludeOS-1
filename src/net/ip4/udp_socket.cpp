@@ -16,10 +16,8 @@
 // limitations under the License.
 
 #include <net/ip4/udp_socket.hpp>
+#include <common>
 #include <memory>
-
-#define likely(x)       __builtin_expect(!!(x), 1)
-#define unlikely(x)     __builtin_expect(!!(x), 0)
 
 namespace net
 {
@@ -34,30 +32,33 @@ namespace net
       port_t port,
       uint16_t length)
   {
-    p->init();
-    p->header().sport = htons(this->l_port);
-    p->header().dport = htons(port);
-    p->set_src(srcIP);
-    p->set_dst(destIP);
-    p->set_length(length);
+    p->init(this->l_port, port);
+    p->set_ip_src(srcIP);
+    p->set_ip_dst(destIP);
+    p->set_data_length(length);
 
     assert(p->data_length() == length);
   }
 
   void UDPSocket::internal_read(UDP::Packet_ptr udp)
   {
-    on_read_handler(
-        udp->src(), udp->src_port(), udp->data(), udp->data_length());
+    on_read_handler(udp->ip_src(), udp->src_port(), (const char*) udp->data(), udp->data_length());
   }
 
-  void UDPSocket::sendto(
+  void UDPSocket::error_read(Error_type type, Error_code code,
+    IP4::addr src_addr, port_t src_port, IP4::addr dest_addr, port_t dest_port)
+  {
+    on_error_handler(type, code, src_addr, src_port, dest_addr, dest_port);
+  }
+
+  void UDPSocket::sendto (
      addr_t destIP,
      port_t port,
      const void* buffer,
      size_t len,
      sendto_handler cb)
   {
-    if (unlikely(len == 0)) return;
+    if (UNLIKELY(len == 0)) return;
     udp_.sendq.emplace_back(
        (const uint8_t*) buffer, len, cb, this->udp_,
        local_addr(), this->l_port, destIP, port);
@@ -65,20 +66,19 @@ namespace net
     // UDP packets are meant to be sent immediately, so try flushing
     udp_.flush();
   }
-  void UDPSocket::bcast(
+  void UDPSocket::bcast (
       addr_t srcIP,
       port_t port,
       const void* buffer,
       size_t len,
       sendto_handler cb)
   {
-    if (unlikely(len == 0)) return;
+    if (UNLIKELY(len == 0)) return;
     udp_.sendq.emplace_back(
          (const uint8_t*) buffer, len, cb, this->udp_,
-         srcIP, this->l_port, IP4::INADDR_BCAST, port);
+         srcIP, this->l_port, IP4::ADDR_BCAST, port);
 
     // UDP packets are meant to be sent immediately, so try flushing
     udp_.flush();
   }
-
 }

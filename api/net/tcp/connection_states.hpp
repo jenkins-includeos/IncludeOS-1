@@ -53,9 +53,13 @@ public:
 
     => SynSent
   */
-  virtual Result handle(Connection&, Packet_ptr in) override;
+  Result handle(Connection&, Packet_ptr in) override;
 
-  inline virtual std::string to_string() const override {
+  bool is_closed() const override {
+    return true;
+  }
+
+  std::string to_string() const override {
     return "CLOSED";
   };
 private:
@@ -117,6 +121,10 @@ public:
   inline virtual std::string to_string() const override {
     return "SYN-SENT";
   };
+
+  virtual bool is_writable() const override
+  { return true; }
+
 private:
   inline SynSent() {};
 };
@@ -165,7 +173,7 @@ public:
 
   virtual size_t send(Connection&, WriteBuffer&) override;
 
-  virtual void receive(Connection&, ReadBuffer&) override;
+  virtual void receive(Connection&, ReadBuffer&&) override;
 
   virtual void close(Connection&) override;
 
@@ -203,7 +211,7 @@ public:
     return instance;
   }
 
-  virtual void receive(Connection&, ReadBuffer&) override;
+  virtual void receive(Connection&, ReadBuffer&&) override;
 
   virtual void close(Connection&) override;
 
@@ -242,7 +250,7 @@ public:
     return instance;
   }
 
-  virtual void receive(Connection&, ReadBuffer&) override;
+  virtual void receive(Connection&, ReadBuffer&&) override;
 
   virtual void close(Connection&) override;
 
@@ -280,7 +288,7 @@ public:
 
   virtual size_t send(Connection&, WriteBuffer&) override;
 
-  virtual void receive(Connection&, ReadBuffer&) override;
+  virtual void receive(Connection&, ReadBuffer&&) override;
 
   virtual void close(Connection&) override;
 
@@ -378,11 +386,14 @@ public:
    */
   virtual Result handle(Connection&, Packet_ptr in) override;
 
-  inline virtual std::string to_string() const override {
+  std::string to_string() const override {
     return "TIME-WAIT";
   };
 
-  inline virtual bool is_closing() const override {
+  bool is_closing() const override {
+    return true;
+  }
+  bool is_closed() const override {
     return true;
   }
 

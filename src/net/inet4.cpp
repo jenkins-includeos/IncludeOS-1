@@ -1,44 +1,58 @@
-//-*- C++ -*-
-#define DEBUG
-#include <os>
+// This file is a part of the IncludeOS unikernel - www.includeos.org
+//
+// Copyright 2015 Oslo and Akershus University College of Applied Sciences
+// and Alfred Bratterud
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include <net/inet4.hpp>
 #include <net/dhcp/dh4client.hpp>
+#include <smp>
 
 using namespace net;
 
 Inet4::Inet4(hw::Nic& nic)
-  : ip4_addr_(IP4::INADDR_ANY),
-    netmask_(IP4::INADDR_ANY),
-    router_(IP4::INADDR_ANY),
-    dns_server(IP4::INADDR_ANY),
-    nic_(nic), eth_(nic), arp_(*this), ip4_(*this),
-    icmp_(*this), udp_(*this), tcp_(*this), dns(*this),
-    bufstore_(nic.bufstore()), MTU_(nic.MTU())
+  : ip4_addr_(IP4::ADDR_ANY),
+    netmask_(IP4::ADDR_ANY),
+    gateway_(IP4::ADDR_ANY),
+    dns_server(IP4::ADDR_ANY),
+    nic_(nic), arp_(*this), ip4_(*this),
+    icmp_(*this), udp_(*this), tcp_(*this), dns_(*this),
+    MTU_(nic.MTU())
 {
-  INFO("Inet4","Bringing up a IPv4 stack");
-  Ensures(sizeof(IP4::addr) == 4);
+  static_assert(sizeof(IP4::addr) == 4, "IPv4 addresses must be 32-bits");
+
+  /** SMP related **/
+  this->cpu_id = SMP::cpu_id();
+  INFO("Inet4", "Bringing up %s on CPU %d",
+        ifname().c_str(), this->get_cpu_id());
 
   /** Upstream delegates */
-  auto eth_bottom(upstream::from<Ethernet,&Ethernet::bottom>(eth_));
-  auto arp_bottom(upstream::from<Arp,&Arp::bottom>(arp_));
-  auto ip4_bottom(upstream::from<IP4,&IP4::bottom>(ip4_));
-  auto icmp4_bottom(upstream::from<ICMPv4,&ICMPv4::bottom>(icmp_));
-  auto udp4_bottom(upstream::from<UDP,&UDP::bottom>(udp_));
-  auto tcp_bottom(upstream::from<TCP,&TCP::bottom>(tcp_));
+  auto arp_bottom(upstream{arp_, &Arp::receive});
+  auto ip4_bottom(upstream{ip4_, &IP4::receive});
+  auto icmp4_bottom(upstream{icmp_, &ICMPv4::receive});
+  auto udp4_bottom(upstream{udp_, &UDP::receive});
+  auto tcp_bottom(upstream{tcp_, &TCP::receive});
 
   /** Upstream wiring  */
   // Packets available
-  nic.on_transmit_queue_available(
-    transmit_avail_delg::from<Inet4, &Inet4::process_sendq>(*this));
+  nic.on_transmit_queue_available({this, &Inet4::process_sendq});
 
-  // Phys -> Eth (Later, this will be passed through router)
-  nic.set_linklayer_out(eth_bottom);
+  // Link -> Arp
+  nic_.set_arp_upstream(arp_bottom);
 
-  // Eth -> Arp
-  eth_.set_arp_handler(arp_bottom);
-
-  // Eth -> IP4
-  eth_.set_ip4_handler(ip4_bottom);
+  // Link -> IP4
+  nic_.set_ip4_upstream(ip4_bottom);
 
   // IP4 -> ICMP
   ip4_.set_icmp_handler(icmp4_bottom);
@@ -50,16 +64,9 @@ Inet4::Inet4(hw::Nic& nic)
   ip4_.set_tcp_handler(tcp_bottom);
 
   /** Downstream delegates */
-  // retreive drivers delegate virtually, instead of setting it to a virtual call
-  auto phys_top(nic.get_physical_out());
-  //auto phys_top(downstream
-  //              ::from<hw::Nic,&hw::Nic::transmit>(nic));
-  auto eth_top(downstream
-               ::from<Ethernet,&Ethernet::transmit>(eth_));
-  auto arp_top(downstream
-               ::from<Arp,&Arp::transmit>(arp_));
-  auto ip4_top(downstream
-               ::from<IP4,&IP4::transmit>(ip4_));
+  auto link_top(nic_.create_link_downstream());
+  auto arp_top(IP4::downstream_arp{arp_, &Arp::transmit});
+  auto ip4_top(downstream{ip4_, &IP4::transmit});
 
   /** Downstream wiring. */
 
@@ -75,30 +82,48 @@ Inet4::Inet4(hw::Nic& nic)
   // IP4 -> Arp
   ip4_.set_linklayer_out(arp_top);
 
-  // Arp -> Eth
-  arp_.set_linklayer_out(eth_top);
+  // Arp -> Link
+  assert(link_top);
+  arp_.set_linklayer_out(link_top);
 
-  // Eth -> Phys
-  assert(phys_top);
-  eth_.set_physical_out(phys_top);
+#ifndef INCLUDEOS_SINGLE_THREADED
+  // move this nework stack automatically
+  // to the current CPU if its not 0
+  if (SMP::cpu_id() != 0) {
+    this->move_to_this_cpu();
+  }
+#endif
+}
+
+void Inet4::error_report(Error_type type, Error_code code, Packet_ptr orig_pckt) {
+  auto pckt_ip4 = static_unique_ptr_cast<PacketIP4>(std::move(orig_pckt));
+
+  if (pckt_ip4->ip_protocol() == Protocol::UDP) {
+    auto pckt_udp = static_unique_ptr_cast<PacketUDP>(std::move(pckt_ip4));
+    udp_.error_report(type, code, pckt_udp->ip_src(), pckt_udp->src_port(),
+      pckt_udp->ip_dst(), pckt_udp->dst_port());
+  } else if (pckt_ip4->ip_protocol() == Protocol::TCP) {
+    auto pckt_tcp = static_unique_ptr_cast<tcp::Packet>(std::move(pckt_ip4));
+    tcp_.error_report(type, code, pckt_tcp->ip_src(), pckt_tcp->src_port(),
+      pckt_tcp->ip_dst(), pckt_tcp->dst_port());
+  }
 }
 
 void Inet4::negotiate_dhcp(double timeout, dhcp_timeout_func handler) {
   INFO("Inet4", "Negotiating DHCP...");
-  if(!dhcp_)
-    dhcp_ = std::make_shared<DHClient>(*this);
+  if (!dhcp_)
+      dhcp_ = std::make_shared<DHClient>(*this);
   // @timeout for DHCP-server negotation
   dhcp_->negotiate(timeout);
   // add timeout_handler if supplied
-  if(handler)
-    dhcp_->on_config(handler);
+  if (handler)
+      dhcp_->on_config(handler);
 }
 
-void Inet4::on_config(dhcp_timeout_func handler) {
-  // setup DHCP if not intialized
+void Inet4::on_config(dhcp_timeout_func handler)
+{
   if(!dhcp_)
-    negotiate_dhcp();
-
+      throw std::runtime_error("DHCP is not yet initialized");
   dhcp_->on_config(handler);
 }
 
@@ -143,4 +168,16 @@ void Inet4::process_sendq(size_t packets) {
     for (size_t i = 0; i < tqa.size(); i++)
     if (give[i]) tqa[i](give[i]);
   */
+}
+
+void Inet4::force_start_send_queues()
+{
+  size_t packets = transmit_queue_available();
+  if (packets) process_sendq(packets);
+}
+
+void Inet4::move_to_this_cpu()
+{
+  this->cpu_id = SMP::cpu_id();
+  nic_.move_to_this_cpu();
 }

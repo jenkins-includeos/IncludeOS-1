@@ -21,11 +21,10 @@
 
 #include <stdexcept>
 #include <vector>
-#include <net/inet_common.hpp>
-#include <util/membitmap.hpp>
+#include <smp>
 
-namespace net{
-
+namespace net
+{
   /**
    * Network buffer storage for uniformly sized buffers.
    *
@@ -36,7 +35,11 @@ namespace net{
    **/
   class BufferStore {
   public:
-    using buffer_t = uint8_t*;
+    struct buffer_t
+    {
+      BufferStore* bufstore;
+      uint8_t*     addr;
+    };
 
     BufferStore() = delete;
     BufferStore(size_t num, size_t bufsize);
@@ -46,52 +49,54 @@ namespace net{
     void release(void*);
 
     /** Get size of a buffer **/
-    inline size_t bufsize() const noexcept
+    size_t bufsize() const noexcept
     { return bufsize_; }
 
-    inline size_t poolsize() const noexcept
+    size_t poolsize() const noexcept
     { return poolsize_; }
 
     /** Check if a buffer belongs here */
-    inline bool is_from_pool(buffer_t addr) const noexcept
+    bool is_from_pool(uint8_t* addr) const noexcept
     { return addr >= pool_begin() and addr < pool_end(); }
 
     /** Check if an address is the start of a buffer */
-    inline bool is_buffer(buffer_t addr) const noexcept
+    bool is_buffer(uint8_t* addr) const noexcept
     { return (addr - pool_) % bufsize_ == 0; }
 
-    inline size_t available() const noexcept
+    size_t available() const noexcept
     { return available_.size(); }
-    
-    void lock(void* addr) {
-      auto* buffer = (buffer_t) addr;
-      assert(is_from_pool(buffer));
-      locked.set( buffer_id(buffer) );
-    }
-    void unlock_and_release(buffer_t addr);
+
+    /** move this bufferstore to the current CPU **/
+    void move_to_this_cpu() noexcept;
 
   private:
-    buffer_t pool_begin() const noexcept {
+    uint8_t* pool_begin() const noexcept {
       return pool_;
     }
-    buffer_t pool_end() const noexcept {
+    uint8_t* pool_end() const noexcept {
       return pool_begin() + poolsize_;
     }
-    size_t buffer_id(buffer_t addr) const {
-      return (addr - pool_) / bufsize_;
-    }
-    
-    size_t               poolsize_;
-    const size_t         bufsize_;
-    buffer_t             pool_;
-    std::vector<buffer_t> available_;
-    MemBitmap  locked;
 
+    BufferStore* get_next_bufstore();
+    inline buffer_t get_buffer_directly() noexcept;
+    inline void     release_directly(uint8_t*);
+
+    size_t               poolsize_;
+    size_t               bufsize_;
+    uint8_t*             pool_;
+    std::vector<uint8_t*> available_;
+    BufferStore*         next_;
+    int                  cpu;
+    static bool          smp_enabled_;
+#ifndef INCLUDEOS_SINGLE_THREADED
+    // has strict alignment reqs, so put at end
+    spinlock_t           plock;
+#endif
     BufferStore(BufferStore&)  = delete;
     BufferStore(BufferStore&&) = delete;
     BufferStore& operator=(BufferStore&)  = delete;
     BufferStore  operator=(BufferStore&&) = delete;
-  }; //< class BufferStore
-} //< namespace net
+  };
+} //< net
 
 #endif //< NET_BUFFER_STORE_HPP

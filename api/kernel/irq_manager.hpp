@@ -18,9 +18,10 @@
 #ifndef KERNEL_IRQ_MANAGER_HPP
 #define KERNEL_IRQ_MANAGER_HPP
 
-#include "os.hpp"
+#include <arch>
 #include <delegate>
 #include <membitmap>
+#include <smp>
 
 // From osdev
 struct IDTDescr {
@@ -35,10 +36,6 @@ struct idt_loc {
   uint16_t limit;
   uint32_t base;
 }__attribute__((packed));
-
-extern "C" {
-  void irq_default_handler();
-}
 
 #define IRQ_BASE          32
 
@@ -58,9 +55,10 @@ extern "C" {
 
     @TODO: Remove all dependencies on old SanOS code. In particular, eoi is now in global scope
 */
-class IRQ_manager {
+class alignas(SMP_ALIGN) IRQ_manager {
 public:
   typedef void (*intr_func) ();
+  typedef void (*exception_func) (void**, uint32_t);
   using irq_delegate = delegate<void()>;
 
   static constexpr size_t  IRQ_LINES = 128;
@@ -75,6 +73,7 @@ public:
    *  @param irq: the IRQ to enable
    */
   void enable_irq(uint8_t irq);
+  void disable_irq(uint8_t irq);
 
   /**
    *  Directly set an IRQ handler in IDT
@@ -89,6 +88,7 @@ public:
    *  }
    */
   void set_handler(uint8_t intr, intr_func func);
+  void set_exception_handler(uint8_t intr, exception_func func);
   void set_irq_handler(uint8_t irq, intr_func func);
 
   /** Get handler from inside the IDT. */
@@ -108,7 +108,8 @@ public:
    *
    *  @todo Create a public member IRQ_manager::eoi for delegates to use
    */
-  void subscribe(uint8_t irq, irq_delegate del);
+  void subscribe(uint8_t irq, irq_delegate, bool create_stat = false);
+  void unsubscribe(uint8_t irq);
 
   // start accepting interrupts
   static void enable_interrupts();
@@ -116,27 +117,26 @@ public:
   /**
    * Get the IRQ manager instance
    */
-  static inline IRQ_manager& get(){
-    static IRQ_manager bsp{0};
-    return bsp;
-  }
+  static IRQ_manager& get();
+  static IRQ_manager& get(int cpu);
 
-  uint8_t get_next_msix_irq();
-  void register_irq(uint8_t vector);
+  uint8_t get_free_irq();
+  void register_irq(uint8_t irq);
 
-  /** Get the total number of cycles spent in halt **/
-  uint64_t cycles_hlt(){
-    return cycles_hlt_;
-  }
+  /** process all pending interrupts */
+  void process_interrupts();
 
-  /** Get the total number of cycles since boot **/
-  uint64_t cycles_total(){
-    return cycles_total_;
-  }
+  std::array<uint64_t*,IRQ_LINES>& get_count_handled()
+  { return count_handled; }
+
+  std::array<uint64_t,IRQ_LINES>& get_count_received()
+  { return count_received; }
+
+  /** Initialize for a local APIC */
+  static void init(int cpuid);
+  IRQ_manager() = default;
 
 private:
-
-  IRQ_manager(uint8_t cpu);
   IRQ_manager(IRQ_manager&) = delete;
   IRQ_manager(IRQ_manager&&) = delete;
   IRQ_manager& operator=(IRQ_manager&&) = delete;
@@ -144,17 +144,12 @@ private:
 
   IDTDescr     idt[INTR_LINES];
   irq_delegate irq_delegates_[IRQ_LINES];
-  uint64_t*    counters[IRQ_LINES];
+  std::array<uint64_t*,IRQ_LINES> count_handled;
+  std::array<uint64_t, IRQ_LINES> count_received;
 
   MemBitmap  irq_subs;
   MemBitmap  irq_pend;
   MemBitmap  irq_todo;
-
-  uint64_t& cycles_hlt_;
-  uint64_t& cycles_total_;
-
-  static const char       default_attr {static_cast<char>(0x8e)};
-  static const uint16_t   default_sel  {0x8};
 
   /**
    *  Create an IDT-gate
@@ -166,17 +161,7 @@ private:
                    uint16_t segment_sel,
                    char attributes);
 
-  /** The OS will call the following : */
-  friend class OS;
-  friend void ::irq_default_handler();
-
-  /** Initialize. Only the OS can initialize the IRQ manager */
-  static void init();
-
-  void bsp_init();
-
-  /** Notify all delegates waiting for interrupts */
-  void notify();
+  void init_local();
 
 }; //< IRQ_manager
 

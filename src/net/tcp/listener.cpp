@@ -23,57 +23,63 @@
 
 using namespace net::tcp;
 
-Listener::Listener(TCP& host, port_t port)
-  : host_(host), port_(port), syn_queue_()
+Listener::Listener(TCP& host, Socket local, ConnectCallback cb)
+  : host_(host), local_(local), syn_queue_(),
+    on_accept_({this, &Listener::default_on_accept}),
+    on_connect_{std::move(cb)},
+    _on_close_({host_, &TCP::close_listener})
 {
-  on_accept_      = AcceptCallback::from<Listener, &Listener::default_on_accept>(this);
-  on_connect_     = ConnectCallback::from<Listener, &Listener::default_on_connect>(this);
 }
 
 bool Listener::default_on_accept(Socket) {
   return true;
 }
 
-void Listener::default_on_connect(Connection_ptr) {
+bool Listener::syn_queue_full() const
+{ return syn_queue_.size() >= host_.max_syn_backlog(); }
 
-}
-
-Socket Listener::local() const {
-  return {host_.address(), port_};
-}
 
 void Listener::segment_arrived(Packet_ptr packet) {
   debug2("<Listener::segment_arrived> Received packet: %s\n",
     packet->to_string().c_str());
+
+  auto it = std::find_if(syn_queue_.begin(), syn_queue_.end(),
+    [dest = packet->source()]
+    (Connection_ptr conn) {
+      return conn->remote() == dest;
+    });
+
   // if it's an reply to any of our half-open connections
-  if(!packet->isset(SYN))
+  if(it != syn_queue_.end())
   {
-    // if there is a connection waiting for the packet
-    for(auto conn : syn_queue_) // take a copy to avoid conn->segment_arrived to make a reference invalid
-    {
-      if(conn->remote() == packet->source())
-      {
-        debug("<Listener::segment_arrived> Found packet receiver: %s\n",
-          conn->to_string().c_str());
-        conn->segment_arrived(packet);
-        debug2("<Listener::segment_arrived> Connection done handling segment\n");
-        return;
-      }
-    }
+    auto conn = *it;
+    debug("<Listener::segment_arrived> Found packet receiver: %s\n",
+      conn->to_string().c_str());
+    conn->segment_arrived(std::move(packet));
+    debug2("<Listener::segment_arrived> Connection done handling segment\n");
+    return;
   }
   // if it's a new attempt (SYN)
   else
   {
+    // don't waste time if the packet does not have SYN
+    if(UNLIKELY(not packet->isset(SYN)))
+    {
+      host_.send_reset(*packet);
+      return;
+    }
+
     // Stat increment number of connection attempts
     host_.connection_attempts_++;
 
     // if we don't like this client, do nothing
-    if(! on_accept_(packet->source()) )
+    if(UNLIKELY(on_accept_(packet->source()) == false))
       return;
 
     // remove oldest connection if queue is full
     debug2("<Listener::segment_arrived> SynQueue: %u\n", syn_queue_.size());
-    if(syn_queue_full())
+    // SYN queue is full
+    if(syn_queue_.size() >= host_.max_syn_backlog())
     {
       debug2("<Listener::segment_arrived> Queue is full\n");
       Expects(not syn_queue_.empty());
@@ -83,17 +89,18 @@ void Listener::segment_arrived(Packet_ptr packet) {
       syn_queue_.pop_back();
     }
 
-    auto& conn = *(syn_queue_.emplace(syn_queue_.begin(),
-      std::make_shared<Connection>( host_, port_, packet->source() )));
-    // Call Listener::connected when Connection is connected
-    conn->on_connect(ConnectCallback::from<Listener, &Listener::connected>(this));
-    conn->_on_cleanup(CleanupCallback::from<Listener, &Listener::remove>(this));
+    auto& conn = *(syn_queue_.emplace(
+      syn_queue_.cbegin(),
+      std::make_shared<Connection>(host_, packet->destination(), packet->source(), ConnectCallback{this, &Listener::connected})
+      )
+    );
+    conn->_on_cleanup({this, &Listener::remove});
     // Open connection
     conn->open(false);
     Ensures(conn->is_listening());
     debug("<Listener::segment_arrived> Connection %s created\n",
       conn->to_string().c_str());
-    conn->segment_arrived(packet);
+    conn->segment_arrived(std::move(packet));
     debug2("<Listener::segment_arrived> Connection done handling segment\n");
     return;
   }
@@ -120,7 +127,17 @@ void Listener::connected(Connection_ptr conn) {
   remove(conn);
   Expects(conn->is_connected());
   host_.add_connection(conn);
-  on_connect_(conn);
+
+  if(on_connect_ != nullptr)
+    on_connect_(conn);
+}
+
+void Listener::close() {
+  // Maybe abort() is too harsh, but connections are fully established yet so why not
+  for(auto conn : syn_queue_)
+    conn->abort();
+
+  _on_close_(*this);
 }
 
 /**
@@ -130,7 +147,7 @@ void Listener::connected(Connection_ptr conn) {
 
 std::string Listener::to_string() const {
   std::stringstream ss;
-  ss << "Port [ " << port_ << " ] " << " SynQueue ( " <<  syn_queue_.size() << " ) ";
+  ss << "[ " << local_.to_string() << " ] " << " SynQueue ( " <<  syn_queue_.size() << " ) ";
 
   for(auto& conn : syn_queue_)
     ss << "\n\t" << conn->to_string();

@@ -22,9 +22,6 @@
 #include <fs/memdisk.hpp>
 #include <statman>
 
-#define likely(x)       __builtin_expect(!!(x), 1)
-#define unlikely(x)     __builtin_expect(!!(x), 0)
-
 extern "C" {
   char _DISK_START_;
   char _DISK_END_;
@@ -33,21 +30,23 @@ extern "C" {
 namespace fs {
 
   MemDisk::MemDisk() noexcept
-  : Drive(),
+  : Block_device(),
     image_start_ { &_DISK_START_ },
     image_end_   { &_DISK_END_ },
-    
+
     stat_read( Statman::get().create(
-               Stat::UINT64, blkname() + ".reads").get_uint64() )
-  {  }
+               Stat::UINT64, device_name() + ".reads").get_uint64() )
+  {
+    INFO("Memdisk", "Initializing");
+  }
 
   MemDisk::buffer_t MemDisk::read_sync(block_t blk)
   {
     stat_read++;
-    
+
     auto sector_loc = image_start_ + blk * block_size();
     // Disallow reading memory past disk image
-    if (unlikely(sector_loc >= image_end_))
+    if (UNLIKELY(sector_loc >= image_end_))
       return buffer_t{};
 
     auto buffer = new uint8_t[block_size()];
@@ -55,16 +54,16 @@ namespace fs {
 
     return buffer_t{buffer, std::default_delete<uint8_t[]>()};
   }
-  
+
   MemDisk::buffer_t MemDisk::read_sync(block_t blk, size_t cnt)
   {
     stat_read++;
-    
+
     auto start_loc = image_start_ + blk * block_size();
     auto end_loc = start_loc + cnt * block_size();
-    
+
     // Disallow reading memory past disk image
-    if (unlikely(end_loc >= image_end_))
+    if (UNLIKELY(end_loc > image_end_))
       return buffer_t{};
 
     auto buffer = new uint8_t[cnt * block_size()];
@@ -77,6 +76,10 @@ namespace fs {
     // we are NOT going to round up to "support" unevenly sized
     // disks that are not created as multiples of sectors
     return (image_end_ - image_start_) / block_size();
+  }
+
+  void MemDisk::deactivate() {
+
   }
 
 } //< namespace fs

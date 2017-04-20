@@ -20,15 +20,15 @@
 #include <cstring>
 #include <iostream>
 
-#include <elf_binary.hpp>
-#include <elf.h>
 #include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <cstdio>
+#include <cstdlib>
 #include <sys/stat.h>
+#include <cassert>
 
-#include <boot/multiboot.h>
-#include <gsl/gsl>
+#include "../api/boot/multiboot.h"
+#include "elf.h"
+#include "../api/util/elf_binary.hpp"
 
 #define SECT_SIZE 512
 #define SECT_SIZE_ERR  666
@@ -53,24 +53,32 @@ class Vmbuild_error : public std::runtime_error {
   using runtime_error::runtime_error;
 };
 
+string get_bootloader_path(int argc, char** argv) {
+
+  if (argc == 2) {
+    // Determine IncludeOS install location from environment, or set to default
+    std::string includeos_install;
+    if (auto env_install = getenv("INCLUDEOS_INSTALL")) {
+      includeos_install = env_install;
+    } else {
+      includeos_install = std::string{getenv("HOME")} + "/IncludeOS_install";
+    }
+    return includeos_install + "/bootloader";
+  } else {
+    return argv[2];
+  }
+}
 
 int main(int argc, char** argv) {
 
   // Verify proper command usage
-  if (argc < 2) {
+  if (argc <= 2) {
     cout << info << usage;
     exit(EXIT_FAILURE);
   }
 
-  std::string includeos_install = std::string{getenv("HOME")} + "/IncludeOS_install";
+  const string bootloader_path = get_bootloader_path(argc, argv);
 
-  // Determine IncludeOS install location from environment, or set to default
-  if (auto env_install = getenv("INCLUDEOS_INSTALL"))
-    includeos_install = env_install;
-
-  INFO(">>> IncludeOS install location: %s", includeos_install.c_str());
-
-  const string bootloader_path = includeos_install + "/bootloader";
   INFO(">>> Using bootloader %s" , bootloader_path.c_str());
 
   if (argc > 2)
@@ -117,9 +125,9 @@ int main(int argc, char** argv) {
 
   INFO("Size of service: \t%ld bytes" , stat_binary.st_size);
 
-  const decltype(binary_sectors) img_size_sect  {1 + binary_sectors+1};
+  const decltype(binary_sectors) img_size_sect  {1 + binary_sectors};
   const decltype(binary_sectors) img_size_bytes {img_size_sect * SECT_SIZE};
-  Expects((img_size_bytes & (SECT_SIZE-1)) == 0);
+  assert((img_size_bytes & (SECT_SIZE-1)) == 0);
 
   INFO("Total disk size: \t%ld bytes, => %ld sectors",
        img_size_bytes, img_size_sect);
@@ -167,14 +175,17 @@ int main(int argc, char** argv) {
 
   INFO("Verifying multiboot header:");
   INFO("Magic value: 0x%x\n" , multiboot.magic);
-  Expects(multiboot.magic == MULTIBOOT_HEADER_MAGIC);
+  if (multiboot.magic != MULTIBOOT_HEADER_MAGIC) {
+    printf("Multiboot magic mismatch: 0x%08x vs %#x\n", multiboot.magic, MULTIBOOT_HEADER_MAGIC);
+  }
+  assert(multiboot.magic == MULTIBOOT_HEADER_MAGIC);
 
   INFO("Flags: 0x%x" , multiboot.flags);
   INFO("Checksum: 0x%x" , multiboot.checksum);
   INFO("Checksum computed: 0x%x", multiboot.checksum + multiboot.flags + multiboot.magic);
 
   // Verify multiboot header checksum
-  Expects(multiboot.checksum + multiboot.flags + multiboot.magic == 0);
+  assert(multiboot.checksum + multiboot.flags + multiboot.magic == 0);
 
   INFO("Header addr: 0x%x" , multiboot.header_addr);
   INFO("Load start: 0x%x" , multiboot.load_addr);
@@ -183,7 +194,7 @@ int main(int argc, char** argv) {
   INFO("Entry: 0x%x" , multiboot.entry_addr);
 
   // Write binary size and entry point to the bootloader
-  *(reinterpret_cast<int*>(disk_head + bootvar_binary_size)) = binary_sectors;
+  *(reinterpret_cast<int*>(disk_head + bootvar_binary_size))     = binary_sectors;
   *(reinterpret_cast<int*>(disk_head + bootvar_binary_location)) = binary.entry();
 
   if (test) {

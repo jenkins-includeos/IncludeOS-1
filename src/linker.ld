@@ -18,18 +18,14 @@
 **/
 ENTRY(_start)
 
-PHDRS {
-    loadable PT_LOAD FLAGS(7) ;
-}
-
 SECTIONS
 {
-  PROVIDE ( _ELF_START_ = . + 0x200000);
+  PROVIDE ( _ELF_START_ = . + 0x100000);
   PROVIDE ( _LOAD_START_ = _ELF_START_); /* For convenience w. multiboot */
 
   .multiboot (_ELF_START_ + SIZEOF_HEADERS): {
       PROVIDE(_MULTIBOOT_START_ = .);
-      *multiboot.o(.rodata);
+      *(.multiboot)
    }
   PROVIDE ( _TEXT_START_ = . );
   .text (_TEXT_START_ ) :
@@ -38,6 +34,7 @@ SECTIONS
     *(.text.*)
     *(.gnu.linkonce.t*)
   }
+  PROVIDE ( _TEXT_END_ = . );
 
   .init ALIGN(0x10) : {
     _INIT_START_ = .;
@@ -109,33 +106,23 @@ SECTIONS
     _DISK_END_ = .;
   }
 
-  .symtab :
-  {
-        _SYMTAB_START = .;
-        *(.symtab)
-        *(.symtab.*)
-  }:loadable
-
-  .strtab :
-  {
-        _STRTAB_START = .;
-        *(.strtab)
-        *(.strtab.*)
-  }:loadable
+  .elf_symbols : {
+    _ELF_SYM_START_ = .;
+    LONG (0);
+  }
 
   .bss :
   {
     _BSS_START_ = .;
     *(.bss .bss.* .gnu.linkonce.b.*)
     *(COMMON)
-    _BSS_END_ = .;
     . = ALIGN(64 / 8);
   }
+  _BSS_END_ = .;
   . = ALIGN(64 / 8);
   _end = .;
+
   PROVIDE (end = .);
   PROVIDE (_ELF_END_ = .);
   PROVIDE (_LOAD_END_ = .);
-
-
 }

@@ -23,6 +23,7 @@
 #include "../inet.hpp"
 #include "ip4.hpp"
 #include <cstring>
+#include <net/packet.hpp>
 
 namespace net {
 
@@ -35,8 +36,10 @@ namespace net {
     using addr_t = IP4::addr;
     using port_t = uint16_t;
 
-    using Packet_ptr = std::shared_ptr<PacketUDP>;
-    using Stack  = Inet<LinkLayer, IP4>;
+    using Packet_ptr    = std::unique_ptr<PacketUDP, std::default_delete<net::Packet>>;
+    using Stack         = IP4::Stack;
+    using Error_type    = Inet<IP4>::Error_type;
+    using Error_code    = Inet<IP4>::Error_code;
 
     typedef delegate<void()> sendto_handler;
 
@@ -75,18 +78,12 @@ namespace net {
     };
 
     /** UDP header */
-    struct udp_header {
+    struct header {
       port_t   sport;
       port_t   dport;
       uint16_t length;
       uint16_t checksum;
     };
-
-    /** Full UDP Header with all sub-headers */
-    struct full_header {
-      IP4::full_header full_hdr;
-      udp_header       udp_hdr;
-    }__attribute__((packed));
 
     ////////////////////////////////////////////
 
@@ -94,11 +91,14 @@ namespace net {
     { return stack_.ip_addr(); }
 
     /** Input from network layer */
-    void bottom(net::Packet_ptr);
+    void receive(net::Packet_ptr);
 
     /** Delegate output to network layer */
     void set_network_out(downstream del)
     { network_layer_out_ = del; }
+
+    void error_report(Error_type type, Error_code code,
+      IP4::addr src_addr, port_t src_port, IP4::addr dest_addr, port_t dest_port);
 
     /** Send UDP datagram from source ip/port to destination ip/port.
 
@@ -133,8 +133,8 @@ namespace net {
     // create and transmit @num packets from sendq
     void process_sendq(size_t num);
 
-    inline constexpr uint16_t max_datagram_size() noexcept {
-      return stack().ip_obj().MDDS() - sizeof(udp_header);
+    uint16_t max_datagram_size() noexcept {
+      return stack().ip_obj().MDDS() - sizeof(header);
     }
 
     class Port_in_use_exception : public std::exception {
@@ -142,7 +142,7 @@ namespace net {
       Port_in_use_exception(UDP::port_t p)
         : port_(p) {}
       virtual const char* what() const noexcept {
-        return "UDP port allready in use";
+        return "UDP port already in use";
       }
 
       UDP::port_t port(){
@@ -158,7 +158,7 @@ namespace net {
     downstream  network_layer_out_;
     Stack&      stack_;
     std::map<port_t, UDPSocket> ports_;
-    port_t      current_port_ {1024};
+    port_t      current_port_;
 
     // the async send queue
     std::deque<WriteBuffer> sendq;
